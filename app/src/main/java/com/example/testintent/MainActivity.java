@@ -8,17 +8,27 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.FileProvider;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.ApkChecksum;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.ParcelFileDescriptor;
+import android.preference.PreferenceManager;
+import android.widget.Toast;
 
 import net.dongliu.apk.parser.ApkFile;
 import net.dongliu.apk.parser.bean.ApkMeta;
@@ -32,11 +42,11 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
 
     public int PERMISSION_REQUEST_CODE = 1332;
-
+    Context context;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
+         context = getApplication().getApplicationContext();
         setContentView(R.layout.activity_main);
         if(ActivityCompat.checkSelfPermission(getApplicationContext(),Manifest.permission.WRITE_EXTERNAL_STORAGE)!= PackageManager.PERMISSION_GRANTED){
             boolean showRationale = ActivityCompat
@@ -117,7 +127,6 @@ public class MainActivity extends AppCompatActivity {
                             //Manifest.permission.READ_CONTACTS/*, Manifest.permission.WRITE_CONTACTS*//*, Manifest.permission.ACCESS_LOCATION_EXTRA_COMMANDS,
                            // Manifest.permission.LOCATION_HARDWARE*/
                             },
-
                     PERMISSION_REQUEST_CODE);
         }
     }
@@ -125,105 +134,185 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(final int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
-      /*  if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.length > 0) {
-                for(int i=0;i<grantResults.length;i++) { //для каждого из запрошенных разрешений проверяем, что это за разрешения, т.к.
-                    if (grantResults[i] != PackageManager.PERMISSION_GRANTED ) {//вызывается из нескольких мест с разными запросами
-                        boolean showRationale;
-                        showRationale = ActivityCompat
-                                .shouldShowRequestPermissionRationale(this, permissions[i]);
-                        if (showRationale) {
-                            confirmAllPermission();
-                        } else {
-                            switch (permissions[i]) {
-                                case Manifest.permission.ACCESS_FINE_LOCATION:
-                                    buildAlertMessagePermission(R.string.location_permission_explanation,
-                                            R.string.grant,
-                                            R.string.close_application,
-                                            R.string.open_location_permission,
-                                            true);
-                                    break;
-
-                                case Manifest.permission.READ_EXTERNAL_STORAGE:
-                                    buildAlertMessagePermission(R.string.external_storage_permission_explanation,
-                                            R.string.grant,
-                                            R.string.close_application,
-                                            R.string.open_external_storage_permission,
-                                            true);
-                                    break;
-
-                                case Manifest.permission.READ_PHONE_STATE:
-                                    buildAlertMessagePermission(R.string.phone_permission_explanation,
-                                            R.string.grant,
-                                            R.string.close_application,
-                                            R.string.open_phone_permission,
-                                            true);
-                                    break;
-
-                                case Manifest.permission.READ_CONTACTS:
-                                    buildAlertMessagePermission(R.string.contacts_permission_explanation,
-                                            R.string.grant,
-                                            R.string.cancel,
-                                            R.string.open_contacts_permission,
-                                            false);
-                                    break;
-                            }
-                        }
-                    }
-                    else if(permissions[i].equals(Manifest.permission.ACCESS_FINE_LOCATION)) {
-                        if (!mCurrentLocationListener.isGpsLocationProviderEnabled() && !mCurrentLocationListener
-                                .isNetworkLocationProviderEnabled()) {
-                            buildAlertMessageNoGps();
-                            return;
-                        }
-                        sentRequestCurrentAddress();
-                    }
-                }
-            }
-        }*/
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-
         loadfiles();
     }
 
     private void loadfiles(){
-        if(needUpdate()) {
+        String packageName=findNeedUpdate();//TODO параллельная загрузка и обновление нескольких приложений. String[] = find и потом их перебор
+        if(!packageName.equals(""))
+            findUpdatesFile(packageName);
+    }
 
-            Context context = getApplication().getApplicationContext();
-            String packName = context.getApplicationContext().getPackageName();
-            File directoryForFileSaving = Environment
-                    .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            File[] list = directoryForFileSaving.listFiles((dir, name) -> name.toLowerCase().endsWith(".apk")); //получаем все файлы в загрузках типа apk
-            for (File apk : list) {
-                try (ApkFile apkFile = new ApkFile(apk)) { //для каждого файла из списка проверяем название и версию
-                    ApkMeta apkMeta = apkFile.getApkMeta();
-                    System.out.println(apkMeta.getPackageName());
-                    System.out.println(apkMeta.getVersionCode());
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-            File newApk = new File(directoryForFileSaving, "call03-release-1.8.5927.apk");//call03-debug-1.8.6335.apk
-            if (newApk.exists()) {
-                try (ApkFile apkFile = new ApkFile(newApk)) {
-                    ApkMeta apkMeta = apkFile.getApkMeta();
-                    System.out.println(apkMeta.getLabel());
-                    System.out.println(apkMeta.getPackageName());
-                    System.out.println(apkMeta.getVersionCode());
-                    for (UseFeature feature : apkMeta.getUsesFeatures()) {
-                        System.out.println(feature.getName());
+    private void findUpdatesFile(String targetPackage){
+        File directoryForFileSaving = Environment
+                .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        File[] list = directoryForFileSaving.listFiles((dir, name) -> name.toLowerCase().endsWith(".apk")); //получаем все файлы в загрузках типа apk
+        for (File apk : list) {
+            try (ApkFile apkFile = new ApkFile(apk)) { //для каждого файла из списка проверяем название и версию
+                ApkMeta apkMeta = apkFile.getApkMeta();
+                if(apkMeta.getPackageName().equalsIgnoreCase(targetPackage)){
+                    if(isTargetVersion(apkMeta.getVersionCode(),0,0/*target.getVersionCode(),target.getbaseVersionCode()*/)){//если версия подходит для обновления, обновляем
+                        setUpNewVersion(apk);
+                        //TODO алерт с предложением обновить позже или прямо сейчас
+                        //TODO алерт перенести в сетап
+                        AlertDialog.Builder alertBuilder = new android.app.AlertDialog.Builder(this);
+                        alertBuilder.setCancelable(false);
+                        alertBuilder.setTitle("Обновление приложения");
+                        alertBuilder.setMessage("Новая версия приложения готова к установке. Установить?");
+                        alertBuilder.setPositiveButton("ДА", (dialogInterface, i) -> {
+                                    setUpNewVersion(apk);
+                            //устанавливаем
+                                }
+                        );
+                        AlertDialog alert = alertBuilder.create();
+                        alert.show();
+                        return;
                     }
-                } catch (IOException e) {
-                    e.printStackTrace();
+                }
+                //System.out.println(apkMeta.getPackageName());
+                //System.out.println(apkMeta.getVersionCode());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        downloadFile();//если дошли до сюда - на устройстве не найдено нужной версии, скачиваем
+    }
+
+    private void downloadFile(){
+        registerReceiver(onDownloadComplete,new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+
+        preferenceManager = PreferenceManager.getDefaultSharedPreferences(this);
+        downloadManager = (DownloadManager)getSystemService(DOWNLOAD_SERVICE);
+        Uri Download_Uri = Uri.parse("http://speedtest.ftp.otenet.gr/files/test10Mb.db");//Uri.parse(/*откуда загружаем*/);//TODO здесь указывать адрес для загрузки
+        DownloadManager.Request request = new DownloadManager.Request(Download_Uri);
+        long download_id = downloadManager.enqueue(request);
+        SharedPreferences.Editor PrefEdit = preferenceManager.edit();
+        PrefEdit.putLong(Download_ID, download_id);//сохраняем в преференс ид загрузчика, так при перезапуске можно будет его снова получить и проверить как он там
+        PrefEdit.commit();
+    }
+
+    SharedPreferences preferenceManager;
+    DownloadManager downloadManager;
+    String Download_ID = "DOWNLOAD_ID";
+
+    private BroadcastReceiver onDownloadComplete = new BroadcastReceiver() {
+
+            @Override
+            public void onReceive(Context arg0, Intent intent) {
+                DownloadManager.Query query = new DownloadManager.Query();
+                query.setFilterById(preferenceManager.getLong(Download_ID, 0));
+                Cursor cursor = downloadManager.query(query);
+//TODO крч, это говно на 12 андойде не работает надо разбираться и проверять на нескольких устройствах
+                if(cursor.moveToFirst()){
+                    int columnIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                    int status = cursor.getInt(columnIndex);
+                    int columnReason = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+                    int reason = cursor.getInt(columnReason);
+
+                    if(status == DownloadManager.STATUS_SUCCESSFUL){
+                        //Retrieve the saved download id
+                        long downloadID = preferenceManager.getLong(Download_ID, 0);
+                        long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+                        if (downloadID == id) {//проверяем, что скачалось то, что нам нужно
+                            //запускаем поиск этого файла или получаем ссылку на него здесь?
+//скачалось что надо, запускаем установку
+                        }
+                     /*   ParcelFileDescriptor file;
+                        try {
+                            file = downloadManager.openDownloadedFile(downloadID);
+                            Toast.makeText(AndroidDownloadActivity.this,
+                                    "File Downloaded: " + file.toString(),
+                                    Toast.LENGTH_LONG).show();
+                        } catch (FileNotFoundException e) {
+                            // TODO Auto-generated catch block
+                            e.printStackTrace();
+                            Toast.makeText(AndroidDownloadActivity.this,
+                                    e.toString(),
+                                    Toast.LENGTH_LONG).show();
+                        }*/
+
+                    }else if(status == DownloadManager.STATUS_FAILED){
+                        Toast.makeText(MainActivity.this,
+                                "FAILED!\n" + "reason of " + reason,
+                               Toast.LENGTH_LONG).show();
+                    }else if(status == DownloadManager.STATUS_PAUSED){
+                     //   Toast.makeText(AndroidDownloadActivity.this,
+                    //            "PAUSED!\n" + "reason of " + reason,
+                     //           Toast.LENGTH_LONG).show();
+                    }else if(status == DownloadManager.STATUS_PENDING){
+                    //    Toast.makeText(AndroidDownloadActivity.this,
+                    //            "PENDING!",
+                     //           Toast.LENGTH_LONG).show();
+                    }else if(status == DownloadManager.STATUS_RUNNING){
+                     //   Toast.makeText(AndroidDownloadActivity.this,
+                     //           "RUNNING!",
+                     //           Toast.LENGTH_LONG).show();
+                    }
                 }
             }
+
+        };
+
+
+
+    private String findNeedUpdate(){
+        //TODO здесь же возвращать текущую версию
+        /*  PackageManager manager = context.getPackageManager();
+            PackageInfo info = null;
+            try {
+                info = manager.getPackageInfo(
+                        context.getPackageName(), 0);
+            } catch (PackageManager.NameNotFoundException e) {
+                e.printStackTrace();
+            }
+            return info.versionCode
+            */
+        //TODO здесь же возвращать нужную версию
+        //TODO здесь проверка необходимости загрузки, которая показывает какой файл нужно обновлять
+        //TODO если нужно обновить другое приложение, получать его текущую версию как-нибудь
+        //TODO здесь же нужно отдавать ссылку на скачивание новой версии
+        return "fifi";//"com.git.call03";//context.getApplicationContext().getPackageName();
+    }
+
+   // long targetVersion=0;
+
+    private boolean isTargetVersion(long findVersion,long targetVersion,long baseVersion){//проверяем версию обнаруженного приложения
+        if (targetVersion==0) //если с сервера не передали версию нового приложения, то просто ищем поновее
+        {
+            return baseVersion<findVersion;
+        }
+        else{//если сервер прислал конкретную версию, ищем её в скачанных
+            return targetVersion==findVersion;
         }
     }
 
-    private boolean needUpdate(){
-        return true;
+    private void setUpNewVersion(File file){
+        //todo параметр - неотложная установка, для случаев когда стартуем с уже загруженным обновлением или если обновление критическое, тогда стартует обновление без вопросов к пользователю
+        //Context context = getActivity().getApplication().getApplicationContext();
+        //String packName = context.getApplicationContext().getPackageName();
+//todo по алерту отложенной установки сохранять путь к файлу в преференс менеджер, если он там есть, то при запуске приложения устанавливать сразу же
+        Intent intent;
+        //TODO выше андроид 10 использовать PACKAGE INSTALLER хз как, правда
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+
+            //File directoryForFileSaving = Environment
+            //        .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            //File newApk = new File(directoryForFileSaving, nameFile);
+
+            Uri apkURI = FileProvider.getUriForFile(context, BuildConfig.APPLICATION_ID + ".provider", file);
+            intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+            intent.setData(apkURI);
+            intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } else {
+            //File directoryForFileSaving = Environment
+             //       .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            //File newApk = new File(directoryForFileSaving, nameFile);
+            intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(Uri.fromFile(file), "application/vnd.android.package-archive");
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        }
+
+        startActivity(intent);
     }
-
-
 }
