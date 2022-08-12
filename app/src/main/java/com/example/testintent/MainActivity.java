@@ -37,6 +37,7 @@ import net.dongliu.apk.parser.bean.UseFeature;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
@@ -46,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
          context = getApplication().getApplicationContext();
         setContentView(R.layout.activity_main);
         if(ActivityCompat.checkSelfPermission(getApplicationContext(),Manifest.permission.WRITE_EXTERNAL_STORAGE)!= PackageManager.PERMISSION_GRANTED){
@@ -139,6 +141,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void loadfiles(){
+        //preferenceManager.get
+
+        //TODO здесь загружать из преференс 2 вещи - ид загрузки - если что-то начинало скачиваться до этого
+        //и ссылку на файл версии, если чтото уже скачалось но не установилось
+        //если ни того ни другого нет, но надо обновиться, тогда как сейчас - проверяем папку довнлоад, ну мало ли... а потом качаем
+
+        //получаем из преференс список уже обновляемых файлов
+        //перебираем их и сравниваем с общим списком поддерживаемых пакетов
+        //если был в преференс - проверяем, есть ли ид скачивания - если есть, проверяем статус загрузки и как-то вешаем листенер снова?
+        //если нет ида скачивания - проверяем наличие ссылки на скачанный апк - если есть, запускаем установку
+        //если нет ссылки на апк - обновляем серверную инфу и решаем обновлять или нет
+        //если нет в преференс - создаём его с нуля, проверяем на сервере статус версии и определяем, надо ли обновлять, то есть find need update
+
+
         String packageName=findNeedUpdate();//TODO параллельная загрузка и обновление нескольких приложений. String[] = find и потом их перебор
         if(!packageName.equals(""))
             findUpdatesFile(packageName);
@@ -190,6 +206,7 @@ public class MainActivity extends AppCompatActivity {
         SharedPreferences.Editor PrefEdit = preferenceManager.edit();
         PrefEdit.putLong(Download_ID, download_id);//сохраняем в преференс ид загрузчика, так при перезапуске можно будет его снова получить и проверить как он там
         PrefEdit.commit();
+
     }
 
     SharedPreferences preferenceManager;
@@ -217,6 +234,7 @@ public class MainActivity extends AppCompatActivity {
                         if (downloadID == id) {//проверяем, что скачалось то, что нам нужно
                             //запускаем поиск этого файла или получаем ссылку на него здесь?
 //скачалось что надо, запускаем установку
+                            Uri uri=downloadManager.getUriForDownloadedFile(id);
                         }
                      /*   ParcelFileDescriptor file;
                         try {
@@ -315,4 +333,70 @@ public class MainActivity extends AppCompatActivity {
 
         startActivity(intent);
     }
+
+    ArrayList<DownloadPackage> downloadPackages=new ArrayList<>();
+
+    private class DownloadPackage{
+        //ЗАПОЛНЯЕМ ПРИ СОЗДАНИИ
+        String packageName; //имя обновляемого пакета
+        long baseVersion; //текущая версия
+
+        //ЗАПОЛНЯЕМ ПО МЕРЕ РАБОТЫ
+        String uriFile; //адрес скачанного файла, если скачан. появляется здесь, если пользователь отказался обновляться прямо сейчас, чтобы получить доступ к нему при новом запуске
+        String managerID; //айди менеджера загрузок, если файл начал загружаться
+
+        //ПОЛУЧАЕМ С СЕРВЕРА//
+        boolean needUpdate; //надо ли обновить
+        long targetVersion; //версия, которую хотим, может быть==0 если хотим просто поновее
+        String urlForLoad; //адрес для загрузки нового файла
+        boolean isCritical; //указывает, может ли пользователь работать во время загрузки и может ли отложить установку
+
+        public DownloadPackage(String packageName, long baseVersion){
+            this.packageName=packageName;
+            this.baseVersion=baseVersion;
+        }
+
+        public String getUriFile() {
+            return uriFile;
+        }
+        public void setUriFile(String uriFile) {
+            this.uriFile = uriFile;
+        }
+
+        public String getManagerID() {
+            return managerID;
+        }
+        public void setManagerID(String managerID) {
+            this.managerID = managerID;
+        }
+
+        public boolean isNeedUpdate() {
+            return needUpdate;
+        }
+        public void setNeedUpdate(boolean needUpdate) {
+            this.needUpdate = needUpdate;
+        }
+
+        public long getTargetVersion() {
+            return targetVersion;
+        }
+        public void setTargetVersion(long targetVersion) {
+            this.targetVersion = targetVersion;
+        }
+
+        public String getUrlForLoad() {
+            return urlForLoad;
+        }
+        public void setUrlForLoad(String urlForLoad) {
+            this.urlForLoad = urlForLoad;
+        }
+
+        public boolean isCritical() {
+            return isCritical;
+        }
+        public void setCritical(boolean critical) {
+            isCritical = critical;
+        }
+    }
+
 }
